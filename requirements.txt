@@ -1,4 +1,5 @@
 streamlit
-openai
+openai>=1.0.0
+pymupdf
 python-docx
-PyMuPDF==1.22.3
+pandas
