@@ -2,6 +2,9 @@ import fitz  # PyMuPDF for PDFs
 from docx import Document
 import streamlit as st
 from openai import OpenAI
+import pandas as pd
+import re
+from io import StringIO
 
 # --- Streamlit UI setup ---
 st.set_page_config(page_title="ATS Resume Matcher", layout="centered")
@@ -27,55 +30,70 @@ def extract_text_from_docx(file):
     doc = Document(file)
     return "\n".join([para.text for para in doc.paragraphs])
 
-# --- Send to GPT for ATS Match Analysis ---
+# --- GPT Resume Scoring Prompt ---
 def get_ats_score(resume, jd):
     prompt = f"""
 I am applying for a job and want to optimize my resume for better alignment with the job description. Follow these structured steps to analyze, compare, and refine my resume while keeping it natural and ATS-friendly.
 
 1. Extract all Responsibilities & Qualifications:
-- Identify and highlight all responsibilities and qualifications from the job description.
-- Summarize them concisely.
+o Identify and highlight all responsibilities and qualifications from the provided job description.
+o Summarize them concisely in a structured manner.
 
 2. Mismatch Analysis (Tabular Format):
-- Compare the resume against qualifications line by line.
-- Output a table with:
-  - Job Qualification
-  - Resume Match % Estimate
-  - Match (Yes/No)
+o Compare my resume against the job qualifications line by line for required and preferred qualifications.
+o Present the results in a table format with these columns:
+   Column 1: Job Qualification (from JD)
+   Column 2: My Resume’s Matching Experience with percentage
+   Column 3: Match or No Match (Yes/No)
+✅ Use markdown syntax to format the mismatch table. Do not use bullet points or paragraph explanations.
 
-3. Experience Refinement:
-- Modify my resume bullet points to better match the JD.
-- Keep it realistic and human-like.
-- Format:
-  - Original Bullet
-  - Modified Bullet
-  - Reason for Change
+3. Experience Refinement (Bullet Point Adjustments):
+o Modify my previous experience to better match the job description.
+o Ensure the changes sound natural and human-like, avoiding exaggeration while enhancing relevance.
+o Present each bullet point modification in a structured format:
+   Original Bullet
+   Modified Bullet
+   Reason for Change
+✅ Use markdown syntax to format the mismatch table. Do not use bullet points or paragraph explanations.
 
-4. Change Log:
-- Track what was modified and why.
-- Keep changes minimal yet impactful.
+4. Change Log for Bullet Points:
+o Track all modifications made in the experience section.
+o Do not change too much—just enough to pass ATS filters while keeping my resume realistic and authentic.
 
 5. Skills Section Enhancement:
-- Suggest edits to skills section based on the JD.
-- Prioritize industry-relevant keywords.
+o Suggest changes to my skills section by adding, rewording, or adjusting skills to align with the job description.
+o Prioritize industry-relevant keywords while ensuring my expertise remains credible.
 
 📌 Important Notes:
-- Keep changes subtle and realistic.
-- Optimize for ATS without making it unnatural.
+• Keep changes minimal yet impactful to pass ATS without making my resume feel unnatural.
+• Focus on keyword optimization rather than drastic modifications.
+• Maintain a human tone in all modifications.
 
-Job Description:
+Now, provide the analysis and refinement based on the attached job description and resume.
+
 {jd}
 
 Resume:
 {resume}
-"""
+    """
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",  # or "gpt-4" if you have access
+        model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.4
     )
-
     return response.choices[0].message.content
+
+# --- Parse Structured GPT Response ---
+def parse_gpt_response(text):
+    qualifications = re.findall(r"Qualification:\s*(.*?)\nMatch %:\s*(\d+)%\nMatch:\s*(Yes|No)", text, re.DOTALL)
+    if not qualifications:
+        return None
+    data = [{
+        "Qualification": q.strip(),
+        "Match %": f"{m.strip()}%",
+        "Match": match.strip()
+    } for q, m, match in qualifications]
+    return pd.DataFrame(data)
 
 # --- UI Layout ---
 jd_input = st.text_area("📄 Paste Job Description here")
@@ -94,5 +112,13 @@ if st.button("🔍 Analyze Resume"):
 
             result = get_ats_score(resume_text, jd_input)
             st.success("✅ Analysis Complete!")
-            st.markdown("### 📈 GPT Analysis Result")
+
+            st.markdown("### 📊 Mismatch Analysis Table")
+            df = parse_gpt_response(result)
+            if df is not None:
+                st.dataframe(df)
+            else:
+                st.info("⚠️ GPT response could not be parsed into a table.")
+
+            st.markdown("### 📝 Full GPT Response")
             st.markdown(result)
