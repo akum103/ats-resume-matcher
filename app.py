@@ -1,27 +1,28 @@
-import fitz  # PyMuPDF for PDFs
+import fitz
 from docx import Document
 import streamlit as st
 from openai import OpenAI
 import pandas as pd
 import re
 from io import StringIO
+import os
 
-# --- Streamlit UI setup ---
+# --- Streamlit Page Config ---
 st.set_page_config(page_title="ATS Resume Matcher", layout="centered")
-st.title("📊 ATS Resume Match Score Tool")
-st.markdown("Upload your resume and paste a job description to get an AI-powered match score.")
 
-# --- Ask for API Key ---
+# --- Select User ---
+user = st.selectbox("👤 Select User", ["Ankit", "Medha"])
+st.markdown(f"Hello, **{user}**! Let's tailor your resume. 🧠")
+
+# --- API Key ---
 api_key = st.text_input("🔑 Enter your OpenAI API Key", type="password")
-
 if not api_key:
     st.warning("Please enter your OpenAI API key to continue.")
     st.stop()
 
-# --- Initialize OpenAI client securely ---
 client = OpenAI(api_key=api_key)
 
-# --- Extract Text from Files ---
+# --- Text Extractors ---
 def extract_text_from_pdf(file):
     doc = fitz.open(stream=file.read(), filetype="pdf")
     return "\n".join([page.get_text() for page in doc])
@@ -47,13 +48,18 @@ o Present the results in a table format with these columns:
    Column 3: Match or No Match (Yes/No)
 ✅ Use markdown syntax to format the mismatch table. Do not use bullet points or paragraph explanations.
 
+Dont forget to give approximate ATS Score
+
 3. Experience Refinement (Bullet Point Adjustments):
+for this, only use my work experience.
 o Modify my previous experience to better match the job description.
 o Ensure the changes sound natural and human-like, avoiding exaggeration while enhancing relevance.
 o Present each bullet point modification in a structured format:
-   Original Bullet
-   Modified Bullet
-   Reason for Change
+   Column 1: Company Name
+   Column 2: Original Bullet
+   Column 3: Modified Bullet
+   Column 4: Reason for Change
+
 ✅ Use markdown syntax to format the mismatch table. Do not use bullet points or paragraph explanations.
 
 4. Change Log for Bullet Points:
@@ -62,6 +68,7 @@ o Do not change too much—just enough to pass ATS filters while keeping my resu
 
 5. Skills Section Enhancement:
 o Suggest changes to my skills section by adding, rewording, or adjusting skills to align with the job description.
+o Give as many skills as possible
 o Prioritize industry-relevant keywords while ensuring my expertise remains credible.
 
 📌 Important Notes:
@@ -83,42 +90,46 @@ Resume:
     )
     return response.choices[0].message.content
 
-# --- Parse Structured GPT Response ---
-def parse_gpt_response(text):
-    qualifications = re.findall(r"Qualification:\s*(.*?)\nMatch %:\s*(\d+)%\nMatch:\s*(Yes|No)", text, re.DOTALL)
-    if not qualifications:
-        return None
-    data = [{
-        "Qualification": q.strip(),
-        "Match %": f"{m.strip()}%",
-        "Match": match.strip()
-    } for q, m, match in qualifications]
-    return pd.DataFrame(data)
+# --- Save Resume File (as text) for user ---
+def save_user_resume(user, resume_text):
+    with open(f"{user.lower()}_resume.txt", "w", encoding="utf-8") as f:
+        f.write(resume_text)
 
-# --- UI Layout ---
+def load_user_resume(user):
+    path = f"{user.lower()}_resume.txt"
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    return None
+
+# --- UI Section ---
 jd_input = st.text_area("📄 Paste Job Description here")
 
 uploaded_file = st.file_uploader("📎 Upload Your Resume (.docx or .pdf)", type=["pdf", "docx"])
 
-if st.button("🔍 Analyze Resume"):
-    if not uploaded_file or not jd_input.strip():
-        st.warning("Please upload a resume and paste the job description.")
+# --- Use Last Resume Button ---
+resume_text = ""
+if st.button("📂 Use Last Uploaded Resume"):
+    saved = load_user_resume(user)
+    if saved:
+        resume_text = saved
+        st.success(f"✅ Loaded last resume for {user}")
     else:
-        with st.spinner("Analyzing... this may take a few seconds..."):
-            if uploaded_file.name.endswith(".pdf"):
-                resume_text = extract_text_from_pdf(uploaded_file)
-            else:
-                resume_text = extract_text_from_docx(uploaded_file)
+        st.warning("No resume found. Please upload one.")
 
+# --- Upload Resume & Analyze ---
+if uploaded_file and not resume_text:
+    resume_text = extract_text_from_pdf(uploaded_file) if uploaded_file.name.endswith(".pdf") else extract_text_from_docx(uploaded_file)
+    save_user_resume(user, resume_text)
+    st.success("📥 Resume uploaded and saved!")
+
+if st.button("🔍 Analyze Resume"):
+    if not resume_text or not jd_input.strip():
+        st.warning("Please provide both resume and job description.")
+    else:
+        with st.spinner("Analyzing..."):
             result = get_ats_score(resume_text, jd_input)
             st.success("✅ Analysis Complete!")
-
-            st.markdown("### 📊 Mismatch Analysis Table")
-            df = parse_gpt_response(result)
-            if df is not None:
-                st.dataframe(df)
-            else:
-                st.info("⚠️ GPT response could not be parsed into a table.")
 
             st.markdown("### 📝 Full GPT Response")
             st.markdown(result)
