@@ -1,0 +1,4 @@
+streamlit
+openai
+python-docx
+PyMuPDF==1.22.3
